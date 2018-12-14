@@ -1,5 +1,8 @@
 required = [
-  "k8s.io/test-infra/prow/config"
+  "k8s.io/test-infra/prow/config",
+  "k8s.io/apimachinery/pkg/api/equality",
+  "k8s.io/apimachinery/pkg/util/diff",
+  "github.com/getlantern/deepcopy",
 ]
 
 [prune]

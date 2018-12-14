@@ -40,6 +40,12 @@
   version = "v1.4.7"
 
 [[projects]]
+  name = "github.com/getlantern/deepcopy"
+  packages = ["."]
+  revision = "b923171e8640f94369e21e324b1b0465cb82ec9f"
+  version = "v1"
+
+[[projects]]
   name = "github.com/ghodss/yaml"
   packages = ["."]
   revision = "0ca9ea5df5451ffdf184b4428c902747c2c11cd7"
@@ -537,6 +543,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "5aaafbc2ca182cd7d536b8ef8742a7afbbf752ecf0d42fcfeab9dd70a26a79c3"
+  inputs-digest = "bfd723e869a655c1ccdb518bd747d8c39cf56f2932ab511fc9a1b6c5b394a9c8"
   solver-name = "gps-cdcl"
   solver-version = 1
