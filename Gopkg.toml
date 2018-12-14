@@ -1,0 +1,7 @@
+required = [
+  "k8s.io/test-infra/prow/config"
+]
+
+[prune]
+  go-tests = true
+  unused-packages = true
