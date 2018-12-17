@@ -22,6 +22,12 @@
   revision = "3a771d992973f24aa725d07868b467d1ddfceafb"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/bwmarrin/snowflake"
+  packages = ["."]
+  revision = "68117e6bbede4dd72d70c7a58d73348ead068509"
+
+[[projects]]
   name = "github.com/davecgh/go-spew"
   packages = ["spew"]
   revision = "8991bc29aa16c548c550c7ff78260e27b9ab7c73"
@@ -217,6 +223,12 @@
     "xfs"
   ]
   revision = "1dc9a6cbc91aacc3e8b2d63db4d2e957a5394ac4"
+
+[[projects]]
+  name = "github.com/satori/go.uuid"
+  packages = ["."]
+  revision = "f58768cc1a7a7e77a3bd49e98cdd21419399b6a3"
+  version = "v1.2.0"
 
 [[projects]]
   branch = "master"
@@ -516,20 +528,30 @@
     "prow/apis/prowjobs",
     "prow/apis/prowjobs/v1",
     "prow/clonerefs",
+    "prow/commentpruner",
     "prow/config",
     "prow/config/org",
     "prow/entrypoint",
     "prow/errorutil",
+    "prow/flagutil",
     "prow/gcsupload",
+    "prow/git",
     "prow/github",
     "prow/initupload",
     "prow/kube",
+    "prow/labels",
+    "prow/pjutil",
+    "prow/pluginhelp",
+    "prow/plugins",
+    "prow/plugins/trigger",
     "prow/pod-utils/clone",
     "prow/pod-utils/decorate",
     "prow/pod-utils/downwardapi",
     "prow/pod-utils/gcs",
     "prow/pod-utils/wrapper",
+    "prow/repoowners",
     "prow/sidecar",
+    "prow/slack",
     "testgrid/util/gcs"
   ]
   revision = "de7741746de35e30acf876e263bacd945e92c990"
@@ -543,6 +565,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "bfd723e869a655c1ccdb518bd747d8c39cf56f2932ab511fc9a1b6c5b394a9c8"
+  inputs-digest = "faf4ba40b737cb169005ed1801e29c9d13ff2bcc6ca58807962eca73d67f9892"
   solver-name = "gps-cdcl"
   solver-version = 1
