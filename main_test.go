@@ -14,6 +14,7 @@ import (
 func TestMakeRehearsalPresubmit(t *testing.T) {
 	testCases := []struct {
 		source   *config.Presubmit
+		pr       int
 		expected *config.Presubmit
 	}{{
 		source: &config.Presubmit{
@@ -29,9 +30,10 @@ func TestMakeRehearsalPresubmit(t *testing.T) {
 			Context:  "ci/prow/build",
 			Brancher: config.Brancher{Branches: []string{"^master$"}},
 		},
+		pr: 123,
 		expected: &config.Presubmit{
 			JobBase: config.JobBase{
-				Name: "rehearse-pull-ci-openshift-ci-operator-master-build",
+				Name: "rehearse-123-pull-ci-openshift-ci-operator-master-build",
 				Spec: &v1.PodSpec{
 					Containers: []v1.Container{{
 						Command: []string{"ci-operator"},
@@ -44,7 +46,10 @@ func TestMakeRehearsalPresubmit(t *testing.T) {
 		},
 	}}
 	for _, tc := range testCases {
-		rehearsal := makeRehearsalPresubmit(tc.source, "openshift/ci-operator")
+		rehearsal, err := makeRehearsalPresubmit(tc.source, "openshift/ci-operator", tc.pr)
+		if err != nil {
+			t.Errorf("Unexpected error in makeRehearsalPresubmit: %v", err)
+		}
 		if !equality.Semantic.DeepEqual(tc.expected, rehearsal) {
 			t.Errorf("Expected rehearsal Presubmit differs:\n%s", diff.ObjectDiff(tc.expected, rehearsal))
 		}

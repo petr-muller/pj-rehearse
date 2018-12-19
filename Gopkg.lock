@@ -86,6 +86,12 @@
   version = "v1.2.0"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/google/btree"
+  packages = ["."]
+  revision = "4030bb1f1f0c35b30ca7009e9ebd06849dd45306"
+
+[[projects]]
   name = "github.com/google/go-cmp"
   packages = [
     "cmp",
@@ -109,6 +115,16 @@
   version = "v2.0.2"
 
 [[projects]]
+  name = "github.com/googleapis/gnostic"
+  packages = [
+    "OpenAPIv2",
+    "compiler",
+    "extensions"
+  ]
+  revision = "7c663266750e7d82587642f65e60bc4083f1f84e"
+  version = "v0.2.0"
+
+[[projects]]
   name = "github.com/gorilla/context"
   packages = ["."]
   revision = "08b5f424b9271eedf6f9f0ce86cb9396ed337a42"
@@ -127,6 +143,15 @@
   version = "v1.1.3"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/gregjones/httpcache"
+  packages = [
+    ".",
+    "diskcache"
+  ]
+  revision = "c63ab54fda8f77302f8d414e19933f2b6026a089"
+
+[[projects]]
   name = "github.com/hashicorp/golang-lru"
   packages = [
     ".",
@@ -134,6 +159,12 @@
   ]
   revision = "20f1fb78b0740ba8c3cb143a61e86ba5c8669768"
   version = "v0.5.0"
+
+[[projects]]
+  name = "github.com/imdario/mergo"
+  packages = ["."]
+  revision = "9f23e2d6bd2a77f959b2bf6acdbefd708a83a4a4"
+  version = "v0.3.6"
 
 [[projects]]
   name = "github.com/json-iterator/go"
@@ -190,6 +221,18 @@
   packages = ["."]
   revision = "4b7aa43c6742a2c18fdef89dd197aaae7dac7ccd"
   version = "1.0.1"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/petar/GoLLRB"
+  packages = ["llrb"]
+  revision = "53be0d36a84c2a886ca057d34b6aa4468df9ccb4"
+
+[[projects]]
+  name = "github.com/peterbourgon/diskv"
+  packages = ["."]
+  revision = "5f041e8faa004a95c88a202771f4cc3e991971e6"
+  version = "v2.0.1"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
@@ -251,6 +294,12 @@
   packages = ["."]
   revision = "bcd833dfe83d3cebad139e4a29ed79cb2318bf95"
   version = "v1.2.0"
+
+[[projects]]
+  name = "github.com/spf13/pflag"
+  packages = ["."]
+  revision = "298182f68c66c05229eb03ac171abe6e309ee79a"
+  version = "v1.0.3"
 
 [[projects]]
   name = "go.opencensus.io"
@@ -445,7 +494,37 @@
 
 [[projects]]
   name = "k8s.io/api"
-  packages = ["core/v1"]
+  packages = [
+    "admissionregistration/v1alpha1",
+    "admissionregistration/v1beta1",
+    "apps/v1",
+    "apps/v1beta1",
+    "apps/v1beta2",
+    "authentication/v1",
+    "authentication/v1beta1",
+    "authorization/v1",
+    "authorization/v1beta1",
+    "autoscaling/v1",
+    "autoscaling/v2beta1",
+    "batch/v1",
+    "batch/v1beta1",
+    "batch/v2alpha1",
+    "certificates/v1beta1",
+    "core/v1",
+    "events/v1beta1",
+    "extensions/v1beta1",
+    "networking/v1",
+    "policy/v1beta1",
+    "rbac/v1",
+    "rbac/v1alpha1",
+    "rbac/v1beta1",
+    "scheduling/v1alpha1",
+    "scheduling/v1beta1",
+    "settings/v1alpha1",
+    "storage/v1",
+    "storage/v1alpha1",
+    "storage/v1beta1"
+  ]
   revision = "4e7be11eab3ffcfc1876898b8272df53785a9504"
   version = "kubernetes-1.11.3"
 
@@ -498,7 +577,9 @@
 [[projects]]
   name = "k8s.io/client-go"
   packages = [
+    "discovery",
     "dynamic",
+    "kubernetes/scheme",
     "pkg/apis/clientauthentication",
     "pkg/apis/clientauthentication/v1alpha1",
     "pkg/apis/clientauthentication/v1beta1",
@@ -506,8 +587,12 @@
     "plugin/pkg/client/auth/exec",
     "rest",
     "rest/watch",
+    "tools/auth",
     "tools/cache",
+    "tools/clientcmd",
     "tools/clientcmd/api",
+    "tools/clientcmd/api/latest",
+    "tools/clientcmd/api/v1",
     "tools/metrics",
     "tools/pager",
     "transport",
@@ -515,6 +600,7 @@
     "util/cert",
     "util/connrotation",
     "util/flowcontrol",
+    "util/homedir",
     "util/integer",
     "util/retry"
   ]
@@ -527,8 +613,10 @@
   packages = [
     "prow/apis/prowjobs",
     "prow/apis/prowjobs/v1",
+    "prow/client/clientset/versioned",
+    "prow/client/clientset/versioned/scheme",
+    "prow/client/clientset/versioned/typed/prowjobs/v1",
     "prow/clonerefs",
-    "prow/commentpruner",
     "prow/config",
     "prow/config/org",
     "prow/entrypoint",
@@ -539,19 +627,13 @@
     "prow/github",
     "prow/initupload",
     "prow/kube",
-    "prow/labels",
     "prow/pjutil",
-    "prow/pluginhelp",
-    "prow/plugins",
-    "prow/plugins/trigger",
     "prow/pod-utils/clone",
     "prow/pod-utils/decorate",
     "prow/pod-utils/downwardapi",
     "prow/pod-utils/gcs",
     "prow/pod-utils/wrapper",
-    "prow/repoowners",
     "prow/sidecar",
-    "prow/slack",
     "testgrid/util/gcs"
   ]
   revision = "de7741746de35e30acf876e263bacd945e92c990"
@@ -565,6 +647,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "faf4ba40b737cb169005ed1801e29c9d13ff2bcc6ca58807962eca73d67f9892"
+  inputs-digest = "e2264ef3345dbf03ac4c701b6a531945cede5a8d20dfe0779c17a592fe8ca0ee"
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -7,102 +7,140 @@ import (
 	"strings"
 
 	// TODO: Solve this properly
+	// "github.com/davecgh/go-spew/spew"
 	"github.com/getlantern/deepcopy"
+	// "github.com/ghodss/yaml"
 	"github.com/sirupsen/logrus"
 
-	"k8s.io/api/core/v1"
-
+	pjapi "k8s.io/test-infra/prow/apis/prowjobs/v1"
+	pjclientset "k8s.io/test-infra/prow/client/clientset/versioned"
 	"k8s.io/test-infra/prow/config"
 	prowflagutil "k8s.io/test-infra/prow/flagutil"
 	"k8s.io/test-infra/prow/github"
-	"k8s.io/test-infra/prow/kube"
-	"k8s.io/test-infra/prow/plugins/trigger"
+	"k8s.io/test-infra/prow/pjutil"
+
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
-func getJobsToExecute() config.JobConfig {
-	return config.JobConfig{
-		Presubmits: map[string][]config.Presubmit{
-			"openshift/release": []config.Presubmit{
-				config.Presubmit{
-					JobBase: config.JobBase{
-						Agent: "kubernetes",
-						Spec: &v1.PodSpec{
-							Containers: []v1.Container{
-								v1.Container{
-									Command: []string{"ci-operator"},
-									Args: []string{
-										"--artifact-dir=$(ARTIFACTS)",
-										"--give-pr-author-access-to-namespace",
-										"--target=build",
-									},
-								},
-							},
-						},
-					},
-					Brancher: config.Brancher{Branches: []string{"^master$"}},
-				},
-			},
-		},
+func getJobsToExecute(ca *config.Agent) config.JobConfig {
+	var youHaveOneJob config.Presubmit
+	for _, job := range ca.Config().Presubmits["openshift/ci-operator"] {
+		if job.Name == "pull-ci-openshift-ci-operator-master-build" {
+			youHaveOneJob = job
+			break
+		}
 	}
+
+	jobs := config.JobConfig{
+		Presubmits: map[string][]config.Presubmit{"openshift/ci-operator": []config.Presubmit{youHaveOneJob}},
+	}
+	return jobs
 }
 
-func makeRehearsalPresubmit(source *config.Presubmit, repo string) *config.Presubmit {
+func makeRehearsalPresubmit(source *config.Presubmit, repo string, prNumber int) (*config.Presubmit, error) {
 	var rehearsal config.Presubmit
 	deepcopy.Copy(&rehearsal, source)
 
-	rehearsal.Name = fmt.Sprintf("rehearse-%s", source.Name)
+	rehearsal.Name = fmt.Sprintf("rehearse-%d-%s", prNumber, source.Name)
 	rehearsal.Context = fmt.Sprintf("ci/rehearse/%s/%s", repo, strings.TrimPrefix(source.Context, "ci/prow/"))
 
 	if len(source.Spec.Containers) != 1 {
-		logrus.Info("Cannot rehearse jobs with more than 1 container in Spec")
-		return nil
+		return nil, fmt.Errorf("Cannot rehearse jobs with more than 1 container in Spec")
 	}
 	container := source.Spec.Containers[0]
 
 	if len(container.Command) != 1 || container.Command[0] != "ci-operator" {
-		logrus.Info("Cannot rehearse jobs that have Command different from simple 'ci-operator'")
-		return nil
+		return nil, fmt.Errorf("Cannot rehearse jobs that have Command different from simple 'ci-operator'")
 	}
 
 	for _, arg := range container.Args {
 		if strings.HasPrefix(arg, "--git-ref") || strings.HasPrefix(arg, "-git-ref") {
-			logrus.Info("Cannot rehearse jobs that call ci-operator with '--git-ref' arg")
-			return nil
+			return nil, fmt.Errorf("Cannot rehearse jobs that call ci-operator with '--git-ref' arg")
 		}
 	}
 
 	if len(source.Branches) != 1 {
-		logrus.Info("Cannot rehearse jobs that run over multiple branches")
-		return nil
+		return nil, fmt.Errorf("Cannot rehearse jobs that run over multiple branches")
 	}
 	branch := strings.TrimPrefix(strings.TrimSuffix(source.Branches[0], "$"), "^")
 
 	gitrefArg := fmt.Sprintf("--git-ref=%s@%s", repo, branch)
 	rehearsal.Spec.Containers[0].Args = append(source.Spec.Containers[0].Args, gitrefArg)
 
-	return &rehearsal
+	return &rehearsal, nil
 }
 
-func executeRehearsalPresubmits(jobs []config.Presubmit, pr *github.PullRequest, githubClient *github.Client, kubeClient *kube.Client, prowConfig *config.Config) {
-	logrus.Warn("Stuff: %v", jobs)
-	trigger.RunOrSkipRequested(
-		trigger.Client{
-			GitHubClient: githubClient,
-			KubeClient:   kubeClient,
-			Config:       prowConfig,
-		}, pr, []config.Presubmit{}, map[string]bool{}, "", "none")
+func loadClusterConfig() (*rest.Config, error) {
+	clusterConfig, err := rest.InClusterConfig()
+	if err == nil {
+		return clusterConfig, nil
+	}
+
+	credentials, err := clientcmd.NewDefaultClientConfigLoadingRules().Load()
+	if err != nil {
+		return nil, fmt.Errorf("could not load credentials from config: %v", err)
+	}
+
+	clusterConfig, err = clientcmd.NewDefaultClientConfig(*credentials, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("could not load client configuration: %v", err)
+	}
+	return clusterConfig, nil
 }
 
-func execute(jobs config.JobConfig, pr *github.PullRequest, githubClient *github.Client, kubeClient *kube.Client, prowConfig *config.Config) {
-	rehearsals := []config.Presubmit{}
+func submitRehearsal(job *config.Presubmit, pr *github.PullRequest, namespace string, logger *logrus.Entry) (*pjapi.ProwJob, error) {
+	pj := pjutil.NewPresubmit(*pr, "", *job, "")
+	logger.WithFields(pjutil.ProwJobFields(&pj)).Info("Submitting a new prowjob.")
+
+	config, err := loadClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("could not load cluster config")
+	}
+
+	cs, err := pjclientset.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("could not create a ProwJob clientset")
+	}
+
+	prowjobs := cs.ProwV1().ProwJobs(namespace)
+	created, err := prowjobs.Create(&pj)
+	if err != nil {
+		return created, err
+	}
+
+	return created, nil
+}
+
+func execute(jobs config.JobConfig, pr *github.PullRequest, githubClient *github.Client, namespace string, logger *logrus.Entry) {
+	rehearsals := []*config.Presubmit{}
+	var logFields logrus.Fields
 
 	for repo, jobs := range jobs.Presubmits {
 		for _, job := range jobs {
-			rehearsals = append(rehearsals, *makeRehearsalPresubmit(&job, repo))
+			logFields = logrus.Fields{"target-repo": repo, "target-job": job.Name}
+			rehearsal, err := makeRehearsalPresubmit(&job, repo, pr.Number)
+			if err != nil {
+				logger.WithFields(logFields).WithError(err).Warn("Failed to make a rehearsal presubmit")
+			} else {
+				logger.WithFields(logFields).WithFields(logrus.Fields{"rehearsal-job": rehearsal.Name}).Info("Created a rehearsal job to be submitted")
+				rehearsals = append(rehearsals, rehearsal)
+			}
 		}
 	}
 
-	executeRehearsalPresubmits(rehearsals, pr, githubClient, kubeClient, prowConfig)
+	if len(rehearsals) > 0 {
+		for _, job := range rehearsals {
+			created, err := submitRehearsal(job, pr, namespace, logger)
+			if err != nil {
+				logger.WithError(err).Warn("Failed to execute a rehearsal presubmit presubmit")
+			} else {
+				logger.WithFields(pjutil.ProwJobFields(created)).Info("Submitted rehearsal prowjob")
+			}
+		}
+	} else {
+		logger.WithFields(logFields).Warn("No job rehearsals")
+	}
 }
 
 type options struct {
@@ -111,19 +149,26 @@ type options struct {
 	configPath    string
 	jobConfigPath string
 
-	kubernetes prowflagutil.KubernetesOptions
-	github     prowflagutil.GitHubOptions
+	prowConfigOrg  string
+	prowConfigRepo string
+	prowConfigPR   int
+
+	github prowflagutil.GitHubOptions
 }
 
 func gatherOptions() options {
 	o := options{}
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	fs.StringVar(&o.configPath, "config-path", "/etc/config/config.yaml", "Path to Prow config.yaml")
-	fs.StringVar(&o.jobConfigPath, "job-config-path", "", "Path to Prow job config file")
 	fs.BoolVar(&o.dryRun, "dry-run", true, "Whether to actually submit rehearsal jobs to Prow")
 
+	fs.StringVar(&o.configPath, "config-path", "/etc/config/config.yaml", "Path to Prow config.yaml")
+	fs.StringVar(&o.jobConfigPath, "job-config-path", "", "Path to Prow job config file")
+
+	fs.StringVar(&o.prowConfigOrg, "prow-config-org", "openshift", "GitHub organization holding the repo with Prow config")
+	fs.StringVar(&o.prowConfigRepo, "prow-config-repo", "release", "Name of GitHub repository with Prow config")
+	fs.IntVar(&o.prowConfigPR, "pr", 0, "Pull Request ID on the Prow config repository for which to rehearse jobs")
+
 	o.github.AddFlags(fs)
-	o.kubernetes.AddFlags(fs)
 
 	fs.Parse(os.Args[1:])
 	return o
@@ -143,33 +188,35 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to validate provided options")
 	}
 
+	prFields := logrus.Fields{"org": o.prowConfigOrg, "repo": o.prowConfigRepo, "PR": o.prowConfigPR}
+	logger := logrus.WithFields(prFields)
+	logger.Info("Rehearsing Prow jobs for a configuration PR")
+
 	secretAgent := &config.SecretAgent{}
 	if o.github.TokenPath != "" {
 		if err := secretAgent.Start([]string{o.github.TokenPath}); err != nil {
-			logrus.WithError(err).Fatal("Failed to start secrets agent")
+			logger.WithError(err).Fatal("Failed to start secrets agent")
 		}
+	} else {
+		logger.Fatal("Cannot start secrets agent without GitHub token")
 	}
 
 	githubClient, err := o.github.GitHubClient(secretAgent, o.dryRun)
 	if err != nil {
-		logrus.WithError(err).Fatal("Failed to create GitHub client")
+		logger.WithError(err).Fatal("Failed to create GitHub client")
 	}
 
-	pr, err := githubClient.GetPullRequest("openshift", "release", 2367)
+	pr, err := githubClient.GetPullRequest(o.prowConfigOrg, o.prowConfigRepo, o.prowConfigPR)
 	if err != nil {
-		logrus.WithError(err).Fatal("Failed to fetch PR info from GitHub")
+		logger.WithError(err).WithFields(prFields).Fatal("Failed to fetch PR info from GitHub")
 	}
 
 	configAgent := &config.Agent{}
 	if err := configAgent.Start(o.configPath, o.jobConfigPath); err != nil {
-		logrus.WithError(err).Fatal("Failed to start config agent")
+		logger.WithError(err).Fatal("Failed to start config agent")
 	}
+	prowjobNamespace := configAgent.Config().ProwJobNamespace
 
-	kubeClient, err := o.kubernetes.Client(configAgent.Config().ProwJobNamespace, o.dryRun)
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to create kubernetes client")
-	}
-
-	jobs := getJobsToExecute()
-	execute(jobs, pr, githubClient, kubeClient, configAgent.Config())
+	jobs := getJobsToExecute(configAgent)
+	execute(jobs, pr, githubClient, prowjobNamespace, logger)
 }

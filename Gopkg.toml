@@ -1,15 +1,16 @@
 required = [
+	"github.com/getlantern/deepcopy",
 	"github.com/sirupsen/logrus",
-  "github.com/getlantern/deepcopy",
 
-  "k8s.io/test-infra/prow/config",
+	"k8s.io/test-infra/prow/apis/prowjobs/v1",
+	"k8s.io/test-infra/prow/client/clientset/versioned",
+	"k8s.io/test-infra/prow/config",
 	"k8s.io/test-infra/prow/flagutil",
-  "k8s.io/test-infra/prow/github",
-	"k8s.io/test-infra/prow/kube",
-  "k8s.io/test-infra/prow/plugins/trigger",
+	"k8s.io/test-infra/prow/github",
+	"k8s.io/test-infra/prow/pjutil",
 
-  "k8s.io/apimachinery/pkg/api/equality",
-  "k8s.io/apimachinery/pkg/util/diff",
+	"k8s.io/client-go/rest",
+	"k8s.io/client-go/tools/clientcmd",
 ]
 
 [prune]
