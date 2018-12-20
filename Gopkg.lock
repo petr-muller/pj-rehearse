@@ -580,6 +580,7 @@
     "discovery",
     "dynamic",
     "kubernetes/scheme",
+    "kubernetes/typed/core/v1",
     "pkg/apis/clientauthentication",
     "pkg/apis/clientauthentication/v1alpha1",
     "pkg/apis/clientauthentication/v1beta1",
@@ -595,6 +596,7 @@
     "tools/clientcmd/api/v1",
     "tools/metrics",
     "tools/pager",
+    "tools/reference",
     "transport",
     "util/buffer",
     "util/cert",
@@ -647,6 +649,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "e2264ef3345dbf03ac4c701b6a531945cede5a8d20dfe0779c17a592fe8ca0ee"
+  inputs-digest = "2efd9a2b74c4df8046b9640391da64e813a909ad62d7301d00f1ab78f55ec906"
   solver-name = "gps-cdcl"
   solver-version = 1
