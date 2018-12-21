@@ -30,9 +30,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func getJobsToExecute(ca *config.Agent) config.JobConfig {
+func getJobsToExecute(prowConfig *config.Config) config.JobConfig {
 	var youHaveOneJob config.Presubmit
-	for _, job := range ca.Config().Presubmits["openshift/ci-operator"] {
+	for _, job := range prowConfig.Presubmits["openshift/ci-operator"] {
 		if job.Name == "pull-ci-openshift-ci-operator-master-build" {
 			youHaveOneJob = job
 			break
@@ -169,7 +169,7 @@ func createRehearsalCiopConfigCM(configs map[string]string, configDir string, na
 	return err
 }
 
-func execute(jobs config.JobConfig, pr *github.PullRequest, githubClient *github.Client, logger *logrus.Entry, ciopConfigsPath string, pjclient pj.ProwJobInterface, cmclient corev1.ConfigMapInterface, dry bool) error {
+func execute(jobs config.JobConfig, pr *github.PullRequest, logger *logrus.Entry, ciopConfigsPath string, pjclient pj.ProwJobInterface, cmclient corev1.ConfigMapInterface, dry bool) error {
 	rehearsals := []*config.Presubmit{}
 	ciopConfigs := map[string]string{}
 	rehearsalCiopConfigCMName := fmt.Sprintf("rehearsal-ci-operator-configs-%d", pr.Number)
@@ -282,11 +282,11 @@ func main() {
 		logger.WithError(err).WithFields(prFields).Fatal("Failed to fetch PR info from GitHub")
 	}
 
-	configAgent := &config.Agent{}
-	if err := configAgent.Start(o.configPath, o.jobConfigPath); err != nil {
-		logger.WithError(err).Fatal("Failed to start config agent")
+	prowConfig, err := config.Load(o.configPath, o.jobConfigPath)
+	if err != nil {
+		logger.WithError(err).Fatal("Failed to load Prow config")
 	}
-	prowjobNamespace := configAgent.Config().ProwJobNamespace
+	prowjobNamespace := prowConfig.ProwJobNamespace
 
 	config, err := loadClusterConfig()
 	if err != nil {
@@ -305,9 +305,9 @@ func main() {
 	}
 	cmclient := cmcset.ConfigMaps(prowjobNamespace)
 
-	jobs := getJobsToExecute(configAgent)
+	jobs := getJobsToExecute(prowConfig)
 	fmt.Printf("%t\n", o.dryRun)
-	if err := execute(jobs, pr, githubClient, logger, o.ciopConfigsPath, pjclient, cmclient, o.dryRun); err != nil {
+	if err := execute(jobs, pr, logger, o.ciopConfigsPath, pjclient, cmclient, o.dryRun); err != nil {
 		logger.WithError(err).Fatal("Failed to execute rehearsal jobs")
 	}
 }
