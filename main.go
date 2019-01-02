@@ -96,7 +96,7 @@ func loadClusterConfig() (*rest.Config, error) {
 	return clusterConfig, nil
 }
 
-func submitRehearsal(job *config.Presubmit, pr *github.PullRequest, logger *logrus.Entry, pjclient pj.ProwJobInterface, dry bool) (*pjapi.ProwJob, error) {
+func submitRehearsal(job *config.Presubmit, pr *github.PullRequest, logger logrus.FieldLogger, pjclient pj.ProwJobInterface, dry bool) (*pjapi.ProwJob, error) {
 	pj := pjutil.NewPresubmit(*pr, "", *job, "")
 	logger.WithFields(pjutil.ProwJobFields(&pj)).Info("Submitting a new prowjob.")
 
@@ -109,15 +109,37 @@ func submitRehearsal(job *config.Presubmit, pr *github.PullRequest, logger *logr
 		return &pj, nil
 	}
 
-	created, err := pjclient.Create(&pj)
-	if err != nil {
-		return created, err
-	}
-
-	return created, nil
+	return pjclient.Create(&pj)
 }
 
-func fixupCioperatorConfigPath(job *config.Presubmit, rehearsalCMName string) string {
+var ciOperatorConfigsCMName = "ci-operator-configs"
+
+type rehearsalCIOperatorConfigs struct {
+	cmclient  corev1.ConfigMapInterface
+	prNumber  int
+	configDir string
+
+	logger logrus.FieldLogger
+	dry    bool
+
+	configMapName string
+	neededConfigs map[string]string
+}
+
+func newRehearsalCIOperatorConfigs(cmclient corev1.ConfigMapInterface, prNumber int, configDir string, logger logrus.FieldLogger, dry bool) *rehearsalCIOperatorConfigs {
+	name := fmt.Sprintf("rehearsal-ci-operator-configs-%d", prNumber)
+	return &rehearsalCIOperatorConfigs{
+		cmclient:      cmclient,
+		prNumber:      prNumber,
+		configDir:     configDir,
+		logger:        logger.WithField("ciop-configs-cm", name),
+		dry:           dry,
+		configMapName: name,
+		neededConfigs: map[string]string{},
+	}
+}
+
+func (c *rehearsalCIOperatorConfigs) FixupJob(job *config.Presubmit, repo string) {
 	for _, container := range job.Spec.Containers {
 		for _, env := range container.Env {
 			if env.ValueFrom == nil {
@@ -126,29 +148,29 @@ func fixupCioperatorConfigPath(job *config.Presubmit, rehearsalCMName string) st
 			if env.ValueFrom.ConfigMapKeyRef == nil {
 				continue
 			}
-			if env.ValueFrom.ConfigMapKeyRef.Name == "ci-operator-configs" {
+			if env.ValueFrom.ConfigMapKeyRef.Name == ciOperatorConfigsCMName {
 				filename := env.ValueFrom.ConfigMapKeyRef.Key
-				env.ValueFrom.ConfigMapKeyRef.Name = rehearsalCMName
-				return filename
+				env.ValueFrom.ConfigMapKeyRef.Name = c.configMapName
+				c.neededConfigs[filename] = filepath.Join(repo, filename)
+
+				logFields := logrus.Fields{"ci-operator-config": filename, "rehearsal-job": job.Name}
+				c.logger.WithFields(logFields).Info("Rehearsal job uses ci-operator config ConfigMap")
 			}
 		}
 	}
-
-	return ""
 }
 
-func createRehearsalCiopConfigCM(configs map[string]string, configDir string, name string, cmclient corev1.ConfigMapInterface, logger *logrus.Entry, dry bool) error {
+func (c *rehearsalCIOperatorConfigs) Create() error {
 	cm := &v1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		ObjectMeta: metav1.ObjectMeta{Name: c.configMapName},
 		Data:       map[string]string{},
 	}
-	logger = logger.WithField("ciop-configs-cm", name)
-	logger.Info("Preparing rehearsal ConfigMap for ci-operator configs")
+	c.logger.Debug("Preparing rehearsal ConfigMap for ci-operator configs")
 
-	for key, path := range configs {
-		fullPath := filepath.Join(configDir, path)
+	for key, path := range c.neededConfigs {
+		fullPath := filepath.Join(c.configDir, path)
 		content, err := ioutil.ReadFile(fullPath)
-		logger.WithField("ciop-config", key).Info("Loading ci-operator config to rehearsal ConfigMap")
+		c.logger.WithField("ciop-config", key).Info("Loading ci-operator config to rehearsal ConfigMap")
 		if err != nil {
 			return fmt.Errorf("failed to read ci-operator config file from %s: %v", fullPath, err)
 		}
@@ -156,7 +178,7 @@ func createRehearsalCiopConfigCM(configs map[string]string, configDir string, na
 		cm.Data[key] = string(content)
 	}
 
-	if dry {
+	if c.dry {
 		cmAsYAML, err := yaml.Marshal(cm)
 		if err != nil {
 			return fmt.Errorf("Failed to marshal ConfigMap to YAML: %v", err)
@@ -164,37 +186,31 @@ func createRehearsalCiopConfigCM(configs map[string]string, configDir string, na
 		fmt.Printf("%s\n", cmAsYAML)
 		return nil
 	}
-	logger.Info("Creating rehearsal ConfigMap for ci-operator configs")
-	_, err := cmclient.Create(cm)
+	c.logger.Info("Creating rehearsal ConfigMap for ci-operator configs")
+	_, err := c.cmclient.Create(cm)
 	return err
 }
 
-func execute(jobs config.JobConfig, pr *github.PullRequest, logger *logrus.Entry, ciopConfigsPath string, pjclient pj.ProwJobInterface, cmclient corev1.ConfigMapInterface, dry bool) error {
+func execute(jobs config.JobConfig, pr *github.PullRequest, logger logrus.FieldLogger, rehearsalConfigs *rehearsalCIOperatorConfigs, pjclient pj.ProwJobInterface, dry bool) error {
 	rehearsals := []*config.Presubmit{}
-	ciopConfigs := map[string]string{}
-	rehearsalCiopConfigCMName := fmt.Sprintf("rehearsal-ci-operator-configs-%d", pr.Number)
-	var logFields logrus.Fields
 
 	for repo, jobs := range jobs.Presubmits {
 		for _, job := range jobs {
-			logFields = logrus.Fields{"target-repo": repo, "target-job": job.Name}
+			jobLogger := logger.WithFields(logrus.Fields{"target-repo": repo, "target-job": job.Name})
 			rehearsal, err := makeRehearsalPresubmit(&job, repo, pr.Number)
 			if err != nil {
-				logger.WithFields(logFields).WithError(err).Warn("Failed to make a rehearsal presubmit")
+				jobLogger.WithError(err).Warn("Failed to make a rehearsal presubmit")
 			} else {
-				logger.WithFields(logFields).WithFields(logrus.Fields{"rehearsal-job": rehearsal.Name}).Info("Created a rehearsal job to be submitted")
+				jobLogger.WithField("rehearsal-job", rehearsal.Name).Info("Created a rehearsal job to be submitted")
+				rehearsalConfigs.FixupJob(rehearsal, repo)
 				rehearsals = append(rehearsals, rehearsal)
-				cioperatorConfig := fixupCioperatorConfigPath(rehearsal, rehearsalCiopConfigCMName)
-				if len(cioperatorConfig) > 0 {
-					logger.WithFields(logFields).WithField("ci-operator-config", cioperatorConfig).Info("Rehearsal job uses ci-operator config ConfigMap")
-					ciopConfigs[cioperatorConfig] = fmt.Sprintf("%s/%s", repo, cioperatorConfig)
-				}
+
 			}
 		}
 	}
 
 	if len(rehearsals) > 0 {
-		if err := createRehearsalCiopConfigCM(ciopConfigs, ciopConfigsPath, rehearsalCiopConfigCMName, cmclient, logger, dry); err != nil {
+		if err := rehearsalConfigs.Create(); err != nil {
 			return fmt.Errorf("failed to prepare rehearsal ci-operator config ConfigMap: %v", err)
 		}
 		for _, job := range rehearsals {
@@ -206,7 +222,7 @@ func execute(jobs config.JobConfig, pr *github.PullRequest, logger *logrus.Entry
 			}
 		}
 	} else {
-		logger.WithFields(logFields).Warn("No job rehearsals")
+		logger.Warn("No job rehearsals")
 	}
 
 	return nil
@@ -305,9 +321,10 @@ func main() {
 	}
 	cmclient := cmcset.ConfigMaps(prowjobNamespace)
 
+	rehearsalConfigs := newRehearsalCIOperatorConfigs(cmclient, o.prowConfigPR, o.ciopConfigsPath, logger, o.dryRun)
+
 	jobs := getJobsToExecute(prowConfig)
-	fmt.Printf("%t\n", o.dryRun)
-	if err := execute(jobs, pr, logger, o.ciopConfigsPath, pjclient, cmclient, o.dryRun); err != nil {
+	if err := execute(jobs, pr, logger, rehearsalConfigs, pjclient, o.dryRun); err != nil {
 		logger.WithError(err).Fatal("Failed to execute rehearsal jobs")
 	}
 }
