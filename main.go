@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -18,8 +19,6 @@ import (
 	pjclientset "k8s.io/test-infra/prow/client/clientset/versioned"
 	pj "k8s.io/test-infra/prow/client/clientset/versioned/typed/prowjobs/v1"
 	"k8s.io/test-infra/prow/config"
-	prowflagutil "k8s.io/test-infra/prow/flagutil"
-	"k8s.io/test-infra/prow/github"
 	"k8s.io/test-infra/prow/pjutil"
 
 	v1 "k8s.io/api/core/v1"
@@ -96,8 +95,13 @@ func loadClusterConfig() (*rest.Config, error) {
 	return clusterConfig, nil
 }
 
-func submitRehearsal(job *config.Presubmit, pr *github.PullRequest, logger logrus.FieldLogger, pjclient pj.ProwJobInterface, dry bool) (*pjapi.ProwJob, error) {
-	pj := pjutil.NewPresubmit(*pr, "", *job, "")
+func submitRehearsal(job *config.Presubmit, jobSpec *pjapi.ProwJobSpec, logger logrus.FieldLogger, pjclient pj.ProwJobInterface, dry bool) (*pjapi.ProwJob, error) {
+	labels := make(map[string]string)
+	for k, v := range job.Labels {
+		labels[k] = v
+	}
+
+	pj := pjutil.NewProwJob(pjutil.PresubmitSpec(*job, *(jobSpec.Refs)), labels)
 	logger.WithFields(pjutil.ProwJobFields(&pj)).Info("Submitting a new prowjob.")
 
 	if dry {
@@ -191,20 +195,19 @@ func (c *rehearsalCIOperatorConfigs) Create() error {
 	return err
 }
 
-func execute(jobs config.JobConfig, pr *github.PullRequest, logger logrus.FieldLogger, rehearsalConfigs *rehearsalCIOperatorConfigs, pjclient pj.ProwJobInterface, dry bool) error {
+func execute(jobs config.JobConfig, jobSpec *pjapi.ProwJobSpec, logger logrus.FieldLogger, rehearsalConfigs *rehearsalCIOperatorConfigs, pjclient pj.ProwJobInterface, dry bool) error {
 	rehearsals := []*config.Presubmit{}
 
 	for repo, jobs := range jobs.Presubmits {
 		for _, job := range jobs {
 			jobLogger := logger.WithFields(logrus.Fields{"target-repo": repo, "target-job": job.Name})
-			rehearsal, err := makeRehearsalPresubmit(&job, repo, pr.Number)
+			rehearsal, err := makeRehearsalPresubmit(&job, repo, getPrNumber(jobSpec))
 			if err != nil {
 				jobLogger.WithError(err).Warn("Failed to make a rehearsal presubmit")
 			} else {
 				jobLogger.WithField("rehearsal-job", rehearsal.Name).Info("Created a rehearsal job to be submitted")
 				rehearsalConfigs.FixupJob(rehearsal, repo)
 				rehearsals = append(rehearsals, rehearsal)
-
 			}
 		}
 	}
@@ -214,7 +217,7 @@ func execute(jobs config.JobConfig, pr *github.PullRequest, logger logrus.FieldL
 			return fmt.Errorf("failed to prepare rehearsal ci-operator config ConfigMap: %v", err)
 		}
 		for _, job := range rehearsals {
-			created, err := submitRehearsal(job, pr, logger, pjclient, dry)
+			created, err := submitRehearsal(job, jobSpec, logger, pjclient, dry)
 			if err != nil {
 				logger.WithError(err).Warn("Failed to execute a rehearsal presubmit presubmit")
 			} else {
@@ -234,12 +237,6 @@ type options struct {
 	configPath      string
 	jobConfigPath   string
 	ciopConfigsPath string
-
-	prowConfigOrg  string
-	prowConfigRepo string
-	prowConfigPR   int
-
-	github prowflagutil.GitHubOptions
 }
 
 func gatherOptions() options {
@@ -251,52 +248,42 @@ func gatherOptions() options {
 	fs.StringVar(&o.jobConfigPath, "job-config-path", "", "Path to Prow job config file")
 	fs.StringVar(&o.ciopConfigsPath, "ci-operator-configs", "", "Path to a directory containing ci-operator configs")
 
-	fs.StringVar(&o.prowConfigOrg, "prow-config-org", "openshift", "GitHub organization holding the repo with Prow config")
-	fs.StringVar(&o.prowConfigRepo, "prow-config-repo", "release", "Name of GitHub repository with Prow config")
-	fs.IntVar(&o.prowConfigPR, "pr", 0, "Pull Request ID on the Prow config repository for which to rehearse jobs")
-
-	o.github.AddFlags(fs)
-
 	fs.Parse(os.Args[1:])
 	return o
 }
 
-func (o *options) Validate() error {
-	if err := o.github.Validate(o.dryRun); err != nil {
-		return err
+func getJobSpec() (*pjapi.ProwJobSpec, error) {
+	specEnv := []byte(os.Getenv("JOB_SPEC"))
+	if len(specEnv) == 0 {
+		return nil, fmt.Errorf("JOB_SPEC not set or set to an empty string")
+	}
+	spec := pjapi.ProwJobSpec{}
+	if err := json.Unmarshal(specEnv, &spec); err != nil {
+		return nil, err
 	}
 
-	return nil
+	if len(spec.Refs.Pulls) > 1 {
+		return nil, fmt.Errorf("Cannot rehearse in the context of a batch job")
+	}
+
+	return &spec, nil
+}
+
+func getPrNumber(jobSpec *pjapi.ProwJobSpec) int {
+	return jobSpec.Refs.Pulls[0].Number
 }
 
 func main() {
 	o := gatherOptions()
-	if err := o.Validate(); err != nil {
-		logrus.WithError(err).Fatal("Failed to validate provided options")
-	}
 
-	prFields := logrus.Fields{"org": o.prowConfigOrg, "repo": o.prowConfigRepo, "PR": o.prowConfigPR}
+	jobSpec, err := getJobSpec()
+	if err != nil {
+		logrus.WithError(err).Fatal("could not read JOB_SPEC")
+
+	}
+	prFields := logrus.Fields{"org": jobSpec.Refs.Org, "repo": jobSpec.Refs.Repo, "PR": getPrNumber(jobSpec)}
 	logger := logrus.WithFields(prFields)
 	logger.Info("Rehearsing Prow jobs for a configuration PR")
-
-	secretAgent := &config.SecretAgent{}
-	if o.github.TokenPath != "" {
-		if err := secretAgent.Start([]string{o.github.TokenPath}); err != nil {
-			logger.WithError(err).Fatal("Failed to start secrets agent")
-		}
-	} else {
-		logger.Fatal("Cannot start secrets agent without GitHub token")
-	}
-
-	githubClient, err := o.github.GitHubClient(secretAgent, o.dryRun)
-	if err != nil {
-		logger.WithError(err).Fatal("Failed to create GitHub client")
-	}
-
-	pr, err := githubClient.GetPullRequest(o.prowConfigOrg, o.prowConfigRepo, o.prowConfigPR)
-	if err != nil {
-		logger.WithError(err).WithFields(prFields).Fatal("Failed to fetch PR info from GitHub")
-	}
 
 	prowConfig, err := config.Load(o.configPath, o.jobConfigPath)
 	if err != nil {
@@ -321,10 +308,10 @@ func main() {
 	}
 	cmclient := cmcset.ConfigMaps(prowjobNamespace)
 
-	rehearsalConfigs := newRehearsalCIOperatorConfigs(cmclient, o.prowConfigPR, o.ciopConfigsPath, logger, o.dryRun)
+	rehearsalConfigs := newRehearsalCIOperatorConfigs(cmclient, getPrNumber(jobSpec), o.ciopConfigsPath, logger, o.dryRun)
 
 	jobs := getJobsToExecute(prowConfig)
-	if err := execute(jobs, pr, logger, rehearsalConfigs, pjclient, o.dryRun); err != nil {
+	if err := execute(jobs, jobSpec, logger, rehearsalConfigs, pjclient, o.dryRun); err != nil {
 		logger.WithError(err).Fatal("Failed to execute rehearsal jobs")
 	}
 }
